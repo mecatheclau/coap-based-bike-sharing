@@ -1,18 +1,29 @@
 package bikesharing;
 
+import org.eclipse.californium.core.CoapClient;
 import org.eclipse.californium.core.CoapResource;
+import org.eclipse.californium.core.CoapResponse;
 import org.eclipse.californium.core.CoapServer;
+import org.eclipse.californium.core.coap.MediaTypeRegistry;
 import org.eclipse.californium.core.server.resources.CoapExchange;
-
+import static org.eclipse.californium.core.coap.CoAP.Type;
 import static org.eclipse.californium.core.coap.CoAP.ResponseCode.*;
+import org.eclipse.californium.core.server.resources.ResourceObserver;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.util.Random;
+import java.util.Scanner;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import java.util.List;
 import java.util.ArrayList;
 
 import java.util.HashMap;
 import java.util.Map;
+
+import java.lang.Thread;
 
 class BikeDatabase {
 	private Map<Long, Bike> bikes;
@@ -54,16 +65,46 @@ class BikeDatabase {
         	return false;
         }
     }
-        
-    public void setBikeGPS(long id, double lat, double lon) {
-    	if (bikes.containsKey(id)) {
-            Bike bike = bikes.get(id);
-            bike.setBikeGPS(lat, lon);
-            bikes.put(id, bike);
-        } else {
-            System.out.println("Bike with ID " + id + " not found.");
-        }
-    }
+    
+	public void setBikeGPS(long id, double lat, double lon) {
+		if (bikes.containsKey(id)) {
+	        Bike bike = bikes.get(id);
+	        bike.setGPS(lat, lon);
+	        bikes.put(id, bike);
+	    } else {
+	        System.out.println("Bike with ID " + id + " not found.");
+	    }
+	}
+
+	public void setBikeGear(long id, int g) {
+		if (bikes.containsKey(id)) {
+		    Bike bike = bikes.get(id);
+		    bike.setGear(g);
+		    bikes.put(id, bike);
+		} else {
+		    System.out.println("Bike with ID " + id + " not found.");
+		}
+	}
+
+	public void setBikeFrontBrake(long id, int bF) {
+		if (bikes.containsKey(id)) {
+		    Bike bike = bikes.get(id);
+		    bike.setBf(bF);
+		    bikes.put(id, bike);
+		} else {
+		    System.out.println("Bike with ID " + id + " not found.");
+		}
+	}
+
+	public void setBikeRearBrake(long id, int bR) {
+		if (bikes.containsKey(id)) {
+		    Bike bike = bikes.get(id);
+		    bike.setBf(bR);
+		    bikes.put(id, bike);
+		} else {
+		    System.out.println("Bike with ID " + id + " not found.");
+		}
+	}
 
     public Cyclist getCyclist(String id) {
         return cyclists.get(id);
@@ -133,6 +174,7 @@ class BikeDatabase {
             this.g = g;
             this.lat = lat;
             this.lon = lon;
+            generateRandomCoordinates();
         }
 
         @Override
@@ -140,11 +182,11 @@ class BikeDatabase {
             return "ID:" + id + " Status:"+status;
         }
         
-        public String getBikeGPS(long id) {
+        public String getGPS() {
         	return "Lat: "+this.lat + " Lon: "+this.lon;
         }
         
-        public void setBikeGPS(double lat, double lon) {
+        public void setGPS(double lat, double lon) {
         	this.lat = lat;
         	this.lon = lon;
         }
@@ -153,16 +195,28 @@ class BikeDatabase {
         	this.status = status;
         }
         
-        public int getBf() {
-        	return this.bF;
+        public String getBf() {
+        	String brake_status;
+        	if (this.bF == 1) {
+				brake_status = "Pressed";
+			} else {
+				brake_status = "Released";
+			}
+        	return brake_status;
         }
         
         public void setBf(int bF) {
         	this.bF = bF;
         }
         
-        public int getBr() {
-        	return this.bR;
+        public String getBr() {
+        	String brake_status;
+        	if (this.bR == 1) {
+				brake_status = "Pressed";
+			} else {
+				brake_status = "Released";
+			}
+        	return brake_status;
         }
         
         public void setBr(int bR) {
@@ -170,11 +224,11 @@ class BikeDatabase {
         }
         
         public int getGear() {
-        	return this.bR;
+        	return this.g;
         }
         
-        public void setGear(int bR) {
-        	this.bR = bR;
+        public void setGear(int g) {
+        	this.g = g;
         }
         
         // Method to generate random GPS coordinates for the bike
@@ -263,6 +317,14 @@ public class Server {
 	        add(new CyclistList(bikeDB));
 	        add(new RentBike(bikeDB));
 	        add(new ReturnBike(bikeDB));
+	        add(new BikeLocationObserver(bikeDB));
+	        add(new SetBikeLocation(bikeDB));
+	        add(new SetBikeGear(bikeDB));
+	        add(new BikeGearObserver(bikeDB));
+	        add(new BikeFrontBrakeObserver(bikeDB));
+	        add(new SetBikeFrontBrake(bikeDB));
+	        add(new BikeRearBrakeObserver(bikeDB));
+	        add(new SetBikeRearBrake(bikeDB));
 		}
 				
 		@Override
@@ -458,6 +520,475 @@ public class Server {
 			
 		}
 		
+		public class SetBikeLocation extends CoapResource {
+			private BikeDatabase bikeDB;
+		    private Random random = new Random();
+		    
+			public SetBikeLocation(BikeDatabase bikeDB) {
+				super("set-bike-location");
+				this.bikeDB = bikeDB;
+			}
+			
+			@Override
+			public void handlePOST(CoapExchange exchange) {
+				String requestBody = exchange.getRequestText();
+
+				long bike_id = Long.parseLong(requestBody);
+				System.out.println(bike_id);
+				BikeDatabase.Bike bike = bikeDB.getBike(bike_id);
+				if (bike != null) {
+					double lat = 40.7128 + (random.nextDouble() * 0.1 - 0.05); // Example: New York City
+		            double lon = -74.0060 + (random.nextDouble() * 0.1 - 0.05);
+		            bikeDB.setBikeGPS(bike_id, lat, lon);
+		            exchange.respond("Bike location update");
+				}
+				else {
+					exchange.respond("Bike not found");
+				}
+			}
+			
+		}
+		
+		public class BikeLocationObserver extends CoapResource {
+
+			private BikeDatabase bikeDB;
+
+		    public BikeLocationObserver(BikeDatabase bikeDB) {
+		        super("bike-coordinates");
+		        this.bikeDB = bikeDB;
+		        setObservable(true);
+		        setObserveType(Type.CON); // configure the notification type to CONs
+		        getAttributes().setObservable(); // mark observable in the Link-Format
+		        getAttributes().setTitle("Bike Location Observer");
+		    }
+
+		    public void startUpdateTask(long bike_id) {
+		        UpdateTask updateTask = new UpdateTask(bike_id);
+		        new Timer().schedule(updateTask, 0, 1000); // Update every 5 seconds (5000 milliseconds)
+		    }
+
+		    private class UpdateTask extends TimerTask {
+		    	private long bike_id;
+
+		    	public UpdateTask(long bike_id) {
+		            this.bike_id = bike_id;
+		        }
+
+	    	   @Override
+	    	   public void run() {
+	    		   	synchronized (UpdateTask.class) { // Use a class-level lock
+	    	            CoapClient client = new CoapClient("coap://localhost:5689/bikes/set-bike-location"); 
+	    	            CoapResponse response = client.post(Long.toString(bike_id), MediaTypeRegistry.TEXT_PLAIN);
+	    	            changed(); // notify all observers when the location is updated
+	    	            try {
+							Thread.sleep(5000); // generate new GPS random data every 5 seconds
+						} catch (InterruptedException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+	    	        }		            
+	    	   }
+	    	}
+		    
+		    @Override
+	        public void handleGET(CoapExchange exchange) {
+		        long bike_id = -1;    // Initialize with an invalid value
+		        
+		        try {
+		        	String bike_id1 = exchange.getRequestOptions().getURIQueries().get(0); // Get the first parameter
+		        	 String[] keyValue = bike_id1.split("=");
+		        	 bike_id = Long.parseLong(keyValue[1]);
+		        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+		            exchange.respond("Invalid request format."+e);
+		            return;
+		        }
+
+		        BikeDatabase.Bike bike = bikeDB.getBike(bike_id);
+		        if (bike != null) {
+		        	// Start the UpdateTask for the specified bike ID
+	                startUpdateTask(bike_id);
+	                
+		            try {
+		                exchange.respond("GPS: "+bike.getGPS());
+		            } catch (Exception e) {
+		                exchange.respond(INTERNAL_SERVER_ERROR, "Error: "+e);
+		            }
+		        } else {
+		            exchange.respond("Bike not found");
+		        }
+	        }
+		}
+
+		
+		public class SetBikeGear extends CoapResource {
+			private BikeDatabase bikeDB;
+		    
+			public SetBikeGear(BikeDatabase bikeDB) {
+				super("change-bike-gear");
+				this.bikeDB = bikeDB;
+			}
+			
+			@Override
+			public void handlePOST(CoapExchange exchange) {
+				String requestBody = exchange.getRequestText();
+				int g = 0; // Initialize with an invalid value
+		        long bike_id = -1;    // Initialize with an invalid value
+		        
+		        try {
+		            String[] params = requestBody.split("&");
+		            for (String param : params) {
+		                String[] keyValue = param.split("=");
+		                if (keyValue.length == 2) {
+		                    if ("gear".equals(keyValue[0])) {
+		                        g = Integer.parseInt(keyValue[1]);
+		                    } else if ("bike_id".equals(keyValue[0])) {
+		                        bike_id = Long.parseLong(keyValue[1]);
+		                    }
+		                }
+		            }
+		        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+		            exchange.respond("Invalid request format.");
+		            return;
+		        }
+		        
+				BikeDatabase.Bike bike = bikeDB.getBike(bike_id);
+				if (bike != null) {
+		            bikeDB.setBikeGear(bike_id, g);
+		            exchange.respond("Bike gear update");
+				}
+				else {
+					exchange.respond("Bike not found");
+				}
+			}
+			
+		}
+		
+		public class BikeGearObserver extends CoapResource {
+
+			private BikeDatabase bikeDB;
+
+		    public BikeGearObserver(BikeDatabase bikeDB) {
+		        super("bike-gear");
+		        this.bikeDB = bikeDB;
+		        setObservable(true);
+		        setObserveType(Type.CON); // configure the notification type to CONs
+		        getAttributes().setObservable(); // mark observable in the Link-Format
+		        getAttributes().setTitle("Bike Location Observer");
+		    }
+
+		    public void startUpdateTask(long bike_id, int gear) {
+		        UpdateTask updateTask = new UpdateTask(bike_id, gear);
+		        new Timer().schedule(updateTask, 0, 1000); // Update every 5 seconds (5000 milliseconds)
+		    }
+
+		    private class UpdateTask extends TimerTask {
+		    	private long bike_id;
+		    	private int gear;
+
+		    	public UpdateTask(long bike_id, int gear) {
+		            this.gear = gear;
+		            this.bike_id = bike_id;
+		        }
+
+	    	   @Override
+	    	   public void run() {
+	    		   	synchronized (UpdateTask.class) { // Use a class-level lock
+	    	            CoapClient client = new CoapClient("coap://localhost:5689/bikes/change-bike-gear"); 
+	    	            String requestBody = "gear="+gear+"&bike_id="+bike_id;
+	    	            CoapResponse response = client.post(requestBody, MediaTypeRegistry.TEXT_PLAIN);
+	    	            changed(); // notify all observers when the location is updated
+	    	            try {
+							Thread.sleep(5000); // generate new GPS random data every 5 seconds
+						} catch (InterruptedException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+	    	        }		            
+	    	   }
+	    	}
+		    
+		    @Override
+	        public void handleGET(CoapExchange exchange) {
+		    	String requestBody = exchange.getRequestText();
+		    	int gear = 0; // Initialize with an invalid value
+		        long bike_id = -1;    // Initialize with an invalid value
+		        
+		        try {
+		        	String bike_id1 = exchange.getRequestOptions().getURIQueries().get(0); // Get the first parameter
+		        	String[] keyValue = bike_id1.split("=");
+		        	bike_id = Long.parseLong(keyValue[1]);
+		        	
+		        	String gear1 = exchange.getRequestOptions().getURIQueries().get(1); // Get the first parameter
+		        	String[] keyValue1 = gear1.split("=");
+		        	gear = Integer.parseInt(keyValue1[1]);
+
+		        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+		            exchange.respond("Invalid request format.");
+		            return;
+		        }
+		        
+		        BikeDatabase.Bike bike = bikeDB.getBike(bike_id);
+		        if (bike != null) {
+		        	// Start the UpdateTask for the specified bike ID
+	                startUpdateTask(bike_id, gear);
+	                
+		            try {
+		                exchange.respond("Current Gear Speed: "+bike.getGear());
+		            } catch (Exception e) {
+		                exchange.respond(INTERNAL_SERVER_ERROR, "Error: "+e);
+		            }
+		        } else {
+		            exchange.respond("Bike not found");
+		        }
+	        }
+		}
+
+		public class SetBikeFrontBrake extends CoapResource {
+			private BikeDatabase bikeDB;
+		    
+			public SetBikeFrontBrake(BikeDatabase bikeDB) {
+				super("change-bike-front-brake");
+				this.bikeDB = bikeDB;
+			}
+			
+			@Override
+			public void handlePOST(CoapExchange exchange) {
+				String requestBody = exchange.getRequestText();
+				int bF = 0; // Initialize with an invalid value
+		        long bike_id = -1;    // Initialize with an invalid value
+		        
+		        try {
+		            String[] params = requestBody.split("&");
+		            for (String param : params) {
+		                String[] keyValue = param.split("=");
+		                if (keyValue.length == 2) {
+		                    if ("brake".equals(keyValue[0])) {
+		                        bF = Integer.parseInt(keyValue[1]);
+		                    } else if ("bike_id".equals(keyValue[0])) {
+		                        bike_id = Long.parseLong(keyValue[1]);
+		                    }
+		                }
+		            }
+		        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+		            exchange.respond("Invalid request format.");
+		            return;
+		        }
+		        
+				BikeDatabase.Bike bike = bikeDB.getBike(bike_id);
+				if (bike != null) {
+		            bikeDB.setBikeFrontBrake(bike_id, bF);
+		            exchange.respond("Bike front brake update");
+				}
+				else {
+					exchange.respond("Bike not found");
+				}
+			}
+			
+		}
+		
+		public class BikeFrontBrakeObserver extends CoapResource {
+
+			private BikeDatabase bikeDB;
+
+		    public BikeFrontBrakeObserver(BikeDatabase bikeDB) {
+		        super("bike-front-brake");
+		        this.bikeDB = bikeDB;
+		        setObservable(true);
+		        setObserveType(Type.CON); // configure the notification type to CONs
+		        getAttributes().setObservable(); // mark observable in the Link-Format
+		        getAttributes().setTitle("Bike Front Brake Observer");
+		    }
+
+		    public void startUpdateTask(long bike_id, int bF) {
+		        UpdateTask updateTask = new UpdateTask(bike_id, bF);
+		        new Timer().schedule(updateTask, 0, 1000); // Update every 5 seconds (5000 milliseconds)
+		    }
+
+		    private class UpdateTask extends TimerTask {
+		    	private long bike_id;
+		    	private int bF;
+
+		    	public UpdateTask(long bike_id, int bF) {
+		            this.bF = bF;
+		            this.bike_id = bike_id;
+		        }
+
+	    	   @Override
+	    	   public void run() {
+	    		   	synchronized (UpdateTask.class) { // Use a class-level lock
+	    	            CoapClient client = new CoapClient("coap://localhost:5689/bikes/change-bike-front-brake"); 
+	    	            String requestBody = "brake="+bF+"&bike_id="+bike_id;
+	    	            CoapResponse response = client.post(requestBody, MediaTypeRegistry.TEXT_PLAIN);
+	    	            changed(); // notify all observers when the location is updated
+	    	            try {
+							Thread.sleep(5000); // generate new GPS random data every 5 seconds
+						} catch (InterruptedException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+	    	        }		            
+	    	   }
+	    	}
+		    
+		    @Override
+	        public void handleGET(CoapExchange exchange) {
+		    	String requestBody = exchange.getRequestText();
+		    	int bF = 0; // Initialize with an invalid value
+		        long bike_id = -1;    // Initialize with an invalid value
+		        
+		        try {
+		        	String bike_id1 = exchange.getRequestOptions().getURIQueries().get(0); // Get the first parameter
+		        	String[] keyValue = bike_id1.split("=");
+		        	bike_id = Long.parseLong(keyValue[1]);
+		        	
+		        	String bF1 = exchange.getRequestOptions().getURIQueries().get(1); // Get the first parameter
+		        	String[] keyValue1 = bF1.split("=");
+		        	bF = Integer.parseInt(keyValue1[1]);
+
+		        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+		            exchange.respond("Invalid request format.");
+		            return;
+		        }
+		        
+		        BikeDatabase.Bike bike = bikeDB.getBike(bike_id);
+		        if (bike != null) {
+		        	// Start the UpdateTask for the specified bike ID
+	                startUpdateTask(bike_id, bF);
+	                
+		            try {
+		                exchange.respond("Current Front Brake: "+bike.getBf());
+		            } catch (Exception e) {
+		                exchange.respond(INTERNAL_SERVER_ERROR, "Error: "+e);
+		            }
+		        } else {
+		            exchange.respond("Bike not found");
+		        }
+	        }
+		}
+
+		public class SetBikeRearBrake extends CoapResource {
+			private BikeDatabase bikeDB;
+		    
+			public SetBikeRearBrake(BikeDatabase bikeDB) {
+				super("change-bike-rear-brake");
+				this.bikeDB = bikeDB;
+			}
+			
+			@Override
+			public void handlePOST(CoapExchange exchange) {
+				String requestBody = exchange.getRequestText();
+				int bR = 0; // Initialize with an invalid value
+		        long bike_id = -1;    // Initialize with an invalid value
+		        
+		        try {
+		            String[] params = requestBody.split("&");
+		            for (String param : params) {
+		                String[] keyValue = param.split("=");
+		                if (keyValue.length == 2) {
+		                    if ("brake".equals(keyValue[0])) {
+		                    	bR = Integer.parseInt(keyValue[1]);
+		                    } else if ("bike_id".equals(keyValue[0])) {
+		                        bike_id = Long.parseLong(keyValue[1]);
+		                    }
+		                }
+		            }
+		        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+		            exchange.respond("Invalid request format.");
+		            return;
+		        }
+		        
+				BikeDatabase.Bike bike = bikeDB.getBike(bike_id);
+				if (bike != null) {
+		            bikeDB.setBikeFrontBrake(bike_id, bR);
+		            exchange.respond("Bike rear brake update");
+				}
+				else {
+					exchange.respond("Bike not found");
+				}
+			}
+			
+		}
+		
+		public class BikeRearBrakeObserver extends CoapResource {
+
+			private BikeDatabase bikeDB;
+
+		    public BikeRearBrakeObserver(BikeDatabase bikeDB) {
+		        super("bike-rear-brake");
+		        this.bikeDB = bikeDB;
+		        setObservable(true);
+		        setObserveType(Type.CON); // configure the notification type to CONs
+		        getAttributes().setObservable(); // mark observable in the Link-Format
+		        getAttributes().setTitle("Bike Rear Brake Observer");
+		    }
+
+		    public void startUpdateTask(long bike_id, int bR) {
+		        UpdateTask updateTask = new UpdateTask(bike_id, bR);
+		        new Timer().schedule(updateTask, 0, 1000); // Update every 5 seconds (5000 milliseconds)
+		    }
+
+		    private class UpdateTask extends TimerTask {
+		    	private long bike_id;
+		    	private int bR;
+
+		    	public UpdateTask(long bike_id, int bR) {
+		            this.bR = bR;
+		            this.bike_id = bike_id;
+		        }
+
+	    	   @Override
+	    	   public void run() {
+	    		   	synchronized (UpdateTask.class) { // Use a class-level lock
+	    	            CoapClient client = new CoapClient("coap://localhost:5689/bikes/change-bike-front-brake"); 
+	    	            String requestBody = "brake="+bR+"&bike_id="+bike_id;
+	    	            CoapResponse response = client.post(requestBody, MediaTypeRegistry.TEXT_PLAIN);
+	    	            changed(); // notify all observers when the location is updated
+	    	            try {
+							Thread.sleep(5000); // generate new GPS random data every 5 seconds
+						} catch (InterruptedException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+	    	        }		            
+	    	   }
+	    	}
+		    
+		    @Override
+	        public void handleGET(CoapExchange exchange) {
+		    	String requestBody = exchange.getRequestText();
+		    	int bR = 0; // Initialize with an invalid value
+		        long bike_id = -1;    // Initialize with an invalid value
+		        
+		        try {
+		        	String bike_id1 = exchange.getRequestOptions().getURIQueries().get(0); // Get the first parameter
+		        	String[] keyValue = bike_id1.split("=");
+		        	bike_id = Long.parseLong(keyValue[1]);
+		        	
+		        	String bF1 = exchange.getRequestOptions().getURIQueries().get(1); // Get the first parameter
+		        	String[] keyValue1 = bF1.split("=");
+		        	bR = Integer.parseInt(keyValue1[1]);
+
+		        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+		            exchange.respond("Invalid request format.");
+		            return;
+		        }
+		        
+		        BikeDatabase.Bike bike = bikeDB.getBike(bike_id);
+		        if (bike != null) {
+		        	// Start the UpdateTask for the specified bike ID
+	                startUpdateTask(bike_id, bR);
+	                
+		            try {
+		                exchange.respond("Current rear Brake: "+bike.getBr());
+		            } catch (Exception e) {
+		                exchange.respond(INTERNAL_SERVER_ERROR, "Error: "+e);
+		            }
+		        } else {
+		            exchange.respond("Bike not found");
+		        }
+	        }
+		}
+	
 	}
 
 }
